@@ -1,7 +1,13 @@
 {
     "scripts": {
+        "fetch-deps": "node scripts/download-smtc-reader.mjs",
+        "prebuild": "npm run fetch-deps",
         "build": "rollup -c",
-        "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.ryan-henning.streamdeck-apple-music\""
+        "build:win": "npm run build && node scripts/copy-plugin.js",
+        "deploy": "node scripts/copy-plugin.js",
+        "pack": "streamdeck pack com.ryan-henning.streamdeck-apple-music.sdPlugin",
+        "validate": "streamdeck validate com.ryan-henning.streamdeck-apple-music.sdPlugin",
+        "watch": "rollup -c -w --watch.onEnd=\"node scripts/watch-sync.mjs\""
     },
     "type": "module",
     "devDependencies": {

@@ -1,0 +1,38 @@
+{
+	"id": "apple-music-dial",
+	"items": [
+		{
+			"key": "title",
+			"type": "text",
+			"rect": [12, 10, 176, 26],
+			"font": {
+				"size": 16,
+				"weight": 600
+			},
+			"alignment": "left",
+			"value": "Apple Music"
+		},
+		{
+			"key": "subtitle",
+			"type": "text",
+			"rect": [12, 38, 176, 20],
+			"font": {
+				"size": 13,
+				"weight": 400
+			},
+			"alignment": "left",
+			"value": "Playlists"
+		},
+		{
+			"key": "counter",
+			"type": "text",
+			"rect": [12, 66, 176, 22],
+			"font": {
+				"size": 12,
+				"weight": 500
+			},
+			"alignment": "left",
+			"value": "1 / 1"
+		}
+	]
+}

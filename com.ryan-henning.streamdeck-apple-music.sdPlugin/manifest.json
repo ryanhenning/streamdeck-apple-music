@@ -1,39 +1,59 @@
 {
-	"Name": "streamdeck-apple-music",
+	"Name": "Apple Music+",
 	"Version": "0.1.0.0",
 	"Author": "Ryan Henning",
 	"Actions": [
 		{
-			"Name": "Counter",
-			"UUID": "com.ryan-henning.streamdeck-apple-music.increment",
+			"Name": "Browse Playlists",
+			"UUID": "com.ryan-henning.streamdeck-apple-music.playlist-dial",
 			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Displays a count, which increments by one on press.",
-			"PropertyInspectorPath": "ui/increment-counter.html",
+			"Tooltip": "Rotate to browse Apple Music playlists, press to play.",
+			"PropertyInspectorPath": "ui/apple-music-settings.html",
+			"Controllers": [
+				"Encoder"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key"
+				}
+			],
+			"Encoder": {
+				"layout": "layouts/apple-music-dial.json",
+				"TriggerDescription": {
+					"Rotate": "Browse playlists",
+					"Push": "Play playlist",
+					"Touch": "Refresh playlists"
+				}
+			}
+		},
+		{
+			"Name": "Favorite Track",
+			"UUID": "com.ryan-henning.streamdeck-apple-music.favorite",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Loves / Favorites the currently playing track in Apple Music.",
+			"PropertyInspectorPath": "ui/apple-music-settings.html",
 			"Controllers": [
 				"Keypad"
 			],
 			"States": [
 				{
 					"Image": "imgs/actions/counter/key",
+					"Title": "♥ Favorite",
 					"TitleAlignment": "middle"
 				}
 			]
 		}
 	],
-	"Category": "streamdeck-apple-music",
+	"Category": "Apple Music",
 	"CategoryIcon": "imgs/plugin/category-icon",
 	"CodePath": "bin/plugin.js",
-	"Description": "Tools to control Apple Music playback via Stream Deck+",
+	"Description": "Control Apple Music playback and browse playlists via Stream Deck+",
 	"Icon": "imgs/plugin/marketplace",
 	"SDKVersion": 3,
 	"Software": {
 		"MinimumVersion": "7.1"
 	},
 	"OS": [
-		{
-			"Platform": "mac",
-			"MinimumVersion": "12"
-		},
 		{
 			"Platform": "windows",
 			"MinimumVersion": "10"

@@ -12,6 +12,26 @@ This repository contains a custom Stream Deck+ plugin built using Node.js/TypeSc
 - **Stream Deck Software**: Version 7.1 or higher.
 - **CLI Tooling**: Official Elgato CLI (`@elgato/cli@latest`).
 - **Development Environment**: WSL (Windows Subsystem for Linux) for source file management and build workflows, targeting the Windows Stream Deck plugin directory.
+- **Windows SMTC Layer**: `smtc-reader.exe` (v0.1.1 x64 by @Barrryy) bundled in `bin/smtc-reader.exe` via `npm run prebuild` / `npm run fetch-deps`.
+
+---
+
+## Architecture & Integration
+
+- **Apple Music Web API (`amp-api.music.apple.com`)**: Fetches user playlists, library items, catalog search, and executes track favoriting (`PUT /v1/me/ratings/songs/{id}`).
+- **Windows SMTC Service (`src/services/smtc.ts`)**: Spawns `smtc-reader.exe --json --watch -i 1` to listen for real-time media session changes across Windows (track title, artist, album, and playback status).
+- **Favorite Track Action (`src/actions/favorite-track.ts`)**: Subscribes to `smtcService`, reflects the currently playing song title on the key display, and on press resolves the catalog song ID and favorites it via the API.
+
+---
+
+## Common Development Commands
+
+- `npm run watch`: Live watch-sync workflow. Rebuilds on file save with Rollup watcher, dynamically resolves Windows `%APPDATA%` to sync files, and reloads the plugin live via Stream Deck CLI (`streamdeck restart com.ryan-henning.streamdeck-apple-music`).
+- `npm run build`: Compiles TypeScript with Rollup into `bin/plugin.js`.
+- `npm run build:win`: Compiles TypeScript and deploys to Windows host `%APPDATA%\Elgato\StreamDeck\Plugins\`.
+- `npm run deploy`: Fast sync of `.sdPlugin` directory to Windows host without rebuilding (for icons/manifest/layout changes).
+- `npm run validate`: Validates `manifest.json` and plugin structure against Elgato's official schemas.
+- `npm run pack`: Packages the plugin into a distributable `.streamDeckPlugin` file.
 
 ---
 
