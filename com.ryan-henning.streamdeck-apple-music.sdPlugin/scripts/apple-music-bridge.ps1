@@ -196,9 +196,14 @@ function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
 
 	$sel = Get-Pattern $item ([System.Windows.Automation.SelectionItemPattern]::Pattern)
 	if (-not $sel) { throw "Sidebar item can't be selected: $aid" }
-	$sel.Select()
-
-	$button = Wait-ForElement $win $buttonId $beforeId 3000
+	if ($sel.Current.IsSelected -and $before) {
+		# The playlist's page is already showing, so selecting it again won't rebuild the page. Waiting for a
+		# new button would just run into the timeout; press the one that's there.
+		$button = $before
+	} else {
+		$sel.Select()
+		$button = Wait-ForElement $win $buttonId $beforeId 3000
+	}
 	if (-not $button) { throw "The playlist page has no $buttonId." }
 	$invoke = Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)
 	$invoke.Invoke()
@@ -285,7 +290,11 @@ while ($true) {
 		$a = $req.args
 		$result = switch ($req.cmd) {
 			'ping' { 'pong' }
-			'listPlaylists' { , (Get-SidebarPlaylists) }
+			'listPlaylists' {
+				# Expanding sidebar folders can bring a visible Apple Music window to the front, like Select does.
+				$fg = [AmBridge.Win32]::GetForegroundWindow()
+				try { , (Get-SidebarPlaylists) } finally { Restore-Foreground $fg }
+			}
 			'play' { Invoke-PlayPlaylist ([string]$a.aid) ([bool]$a.shuffle) }
 			'libraryInfo' { Get-LibraryInfo }
 			'thumbnails' { New-Thumbnails $a.items ([int]$a.size) }
