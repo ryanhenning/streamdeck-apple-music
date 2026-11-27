@@ -1,42 +1,23 @@
 import streamDeck from "@elgato/streamdeck";
-import { PlaylistDialAction } from "./actions/playlist-dial";
 import { FavoriteTrackAction } from "./actions/favorite-track";
-import { appleMusic } from "./services/apple-music";
+import { PlaylistDialAction } from "./actions/playlist-dial";
 import { appleMusicApp } from "./services/apple-music-app";
 
-// Enable trace logging during development
-streamDeck.logger.setLevel("trace");
+// "trace" would also log every message from Stream Deck, including settings; keep it for local debugging only.
+streamDeck.logger.setLevel("info");
 
-// Listen for global settings changes (e.g. from the Property Inspector)
+type GlobalSettings = { libraryPath?: string };
+
+// Optional override for where the Apple Music library (and its artwork cache) lives.
 streamDeck.settings.onDidReceiveGlobalSettings((ev) => {
-	const settings = ev.settings as { developerToken?: string; userToken?: string; libraryPath?: string };
-	appleMusicApp.setLibraryPath(settings.libraryPath);
-	if (settings.developerToken || settings.userToken) {
-		appleMusic.setTokens({
-			developerToken: settings.developerToken,
-			userToken: settings.userToken
-		});
-		streamDeck.logger.info("Updated Apple Music tokens from global settings");
-	}
+	appleMusicApp.setLibraryPath((ev.settings as GlobalSettings).libraryPath);
 });
+streamDeck.settings
+	.getGlobalSettings<GlobalSettings>()
+	.then((settings) => appleMusicApp.setLibraryPath(settings?.libraryPath))
+	.catch((err) => streamDeck.logger.warn(`Could not load global settings on startup: ${err}`));
 
-// Load existing global settings on startup
-streamDeck.settings.getGlobalSettings<{ developerToken?: string; userToken?: string; libraryPath?: string }>().then((settings) => {
-	appleMusicApp.setLibraryPath(settings?.libraryPath);
-	if (settings?.developerToken || settings?.userToken) {
-		appleMusic.setTokens({
-			developerToken: settings.developerToken,
-			userToken: settings.userToken
-		});
-		streamDeck.logger.info("Loaded Apple Music tokens from startup global settings");
-	}
-}).catch((err) => {
-	streamDeck.logger.warn(`Could not load global settings on startup: ${err}`);
-});
-
-// Register our actions
 streamDeck.actions.registerAction(new PlaylistDialAction());
 streamDeck.actions.registerAction(new FavoriteTrackAction());
 
-// Connect to Stream Deck
 streamDeck.connect();

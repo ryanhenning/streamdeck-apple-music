@@ -11,6 +11,8 @@
 #   play {aid, shuffle}  -> open that playlist and press Play (in order) or Shuffle
 #   libraryInfo          -> where the "Apple Music Library.musiclibrary" folder is likely to be
 #   thumbnails {items:[{src,dst}], size} -> resize artwork JPEGs to small PNGs for the touch strip
+#   nowPlaying           -> title / artist / status from Windows media controls
+#   favorite             -> press the now-playing bar's Favorite button
 #   ping
 
 $ErrorActionPreference = 'Stop'
@@ -223,6 +225,41 @@ function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
 	return [ordered]@{ status = $status }
 }
 
+function Get-NowPlaying {
+	try {
+		if (-not $script:smtc) {
+			$script:smtc = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+		}
+		foreach ($s in $script:smtc.GetSessions()) {
+			if ($s.SourceAppUserModelId -notlike 'AppleInc.AppleMusicWin*') { continue }
+			$p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+			# Apple Music puts "Artist — Album" into the artist field and leaves the album empty.
+			return [ordered]@{ title = $p.Title; artist = $p.Artist; status = [string]$s.GetPlaybackInfo().PlaybackStatus }
+		}
+	} catch { }
+	return $null
+}
+
+function Invoke-FavoriteCurrent {
+	# The now-playing bar (TransportBar > LCD) has a Button named 'Favorite' with no AutomationId.
+	$win = Get-AppleMusicWindow
+	if (-not $win) { throw 'Apple Music is not running.' }
+	$lcd = Find-ById $win 'LCD'
+	if (-not $lcd) { throw 'The now-playing bar was not found.' }
+	$cond = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+	$button = $null
+	foreach ($b in $lcd.FindAll($TreeScope::Children, $cond)) {
+		if ($b.Current.Name -like 'Favorite*' -or $b.Current.Name -like '*Favorite') { $button = $b; break }
+	}
+	if (-not $button) { throw 'No Favorite button in the now-playing bar.' }
+	$before = $button.Current.Name
+	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
+	try { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+	finally { Restore-Foreground $previousForeground }
+	Start-Sleep -Milliseconds 300
+	return [ordered]@{ before = $before; after = $button.Current.Name }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Library location and artwork thumbnails
 # ---------------------------------------------------------------------------------------------
@@ -298,6 +335,8 @@ while ($true) {
 			'play' { Invoke-PlayPlaylist ([string]$a.aid) ([bool]$a.shuffle) }
 			'libraryInfo' { Get-LibraryInfo }
 			'thumbnails' { New-Thumbnails $a.items ([int]$a.size) }
+			'nowPlaying' { Get-NowPlaying }
+			'favorite' { Invoke-FavoriteCurrent }
 			default { throw "Unknown command: $($req.cmd)" }
 		}
 		Send ([ordered]@{ id = $id; ok = $true; result = $result })

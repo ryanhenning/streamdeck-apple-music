@@ -1,100 +1,73 @@
-import {
-	action,
-	KeyDownEvent,
-	SingletonAction,
-	streamDeck,
-	WillAppearEvent,
-	WillDisappearEvent
-} from "@elgato/streamdeck";
+import { action, KeyAction, KeyDownEvent, SingletonAction, streamDeck, WillAppearEvent, WillDisappearEvent } from "@elgato/streamdeck";
 import type { JsonObject } from "@elgato/utils";
-import { appleMusic } from "../services/apple-music";
-import { smtcService, type SmtcTrackInfo } from "../services/smtc";
+import { appleMusicApp } from "../services/apple-music-app";
+import { truncate } from "./playlist-dial-helpers";
 
-export type FavoriteActionSettings = JsonObject & {
-	userToken?: string;
-	developerToken?: string;
-};
+export type FavoriteActionSettings = JsonObject;
 
+/** How often the key refreshes the current song title, in ms. */
+const POLL_MS = 3_000;
+
+/**
+ * Key that favorites the song Apple Music is playing, by pressing the Favorite button in the app's
+ * now-playing bar. Shows the current title, read from Windows media controls.
+ */
 @action({ UUID: "com.ryan-henning.streamdeck-apple-music.favorite" })
 export class FavoriteTrackAction extends SingletonAction<FavoriteActionSettings> {
-	private unregisterSmtc: (() => void) | null = null;
-	private activeTrack: SmtcTrackInfo | null = null;
+	private keys = new Map<string, KeyAction<FavoriteActionSettings>>();
+	private timer: NodeJS.Timeout | null = null;
+	private lastTitle: string | null = null;
+	private flashUntil = 0;
 
 	override async onWillAppear(ev: WillAppearEvent<FavoriteActionSettings>): Promise<void> {
-		this.unregisterSmtc = smtcService.addChangeListener((track) => {
-			this.activeTrack = track;
-			if (!ev.action.isKey()) return;
-			if (track?.title) {
-				const shortTitle = track.title.length > 18 ? track.title.slice(0, 15) + "..." : track.title;
-				void ev.action.setTitle(`♥\n${shortTitle}`);
-			} else {
-				void ev.action.setTitle("♥ Favorite");
-			}
-		});
+		if (!ev.action.isKey()) return;
+		this.keys.set(ev.action.id, ev.action);
+		await ev.action.setTitle(this.titleText());
+		this.timer ??= setInterval(() => void this.refresh(), POLL_MS);
+		void this.refresh();
 	}
 
-	override async onWillDisappear(_ev: WillDisappearEvent<FavoriteActionSettings>): Promise<void> {
-		if (this.unregisterSmtc) {
-			this.unregisterSmtc();
-			this.unregisterSmtc = null;
+	override async onWillDisappear(ev: WillDisappearEvent<FavoriteActionSettings>): Promise<void> {
+		this.keys.delete(ev.action.id);
+		if (this.keys.size === 0 && this.timer) {
+			clearInterval(this.timer);
+			this.timer = null;
 		}
 	}
 
 	override async onKeyDown(ev: KeyDownEvent<FavoriteActionSettings>): Promise<void> {
-		if (ev.payload.settings.developerToken || ev.payload.settings.userToken) {
-			appleMusic.setTokens({
-				developerToken: ev.payload.settings.developerToken,
-				userToken: ev.payload.settings.userToken
-			});
-		}
-
-		const track = this.activeTrack || smtcService.getCurrentTrack();
-		if (!track || !track.title) {
-			streamDeck.logger.warn("No active track detected from Windows SMTC to favorite.");
-			await ev.action.showAlert();
-			return;
-		}
-
 		try {
-			await ev.action.setTitle("Loving...");
-			// Query Apple Music catalog for matching song ID by title & artist
-			const searchTerm = track.artist ? `${track.title} ${track.artist}` : track.title;
-			streamDeck.logger.info(`Searching Apple Music catalog for: "${searchTerm}"`);
-
-			const match = await appleMusic.searchSong(searchTerm);
-			if (!match?.id) {
-				streamDeck.logger.warn(`Could not find song match for: ${searchTerm}`);
-				await ev.action.showAlert();
-				await ev.action.setTitle("Not Found");
-				return;
-			}
-
-			streamDeck.logger.info(`Favoriting song ID ${match.id} (${match.name} - ${match.artistName})`);
-			const success = await appleMusic.favoriteTrack(match.id);
-
-			if (success) {
-				await ev.action.showOk();
-				await ev.action.setTitle("Loved! ♥");
-			} else {
-				await ev.action.showAlert();
-				await ev.action.setTitle("Failed");
-			}
-
-			// Restore track title after 2 seconds
-			setTimeout(() => {
-				const current = this.activeTrack || smtcService.getCurrentTrack();
-				if (current?.title) {
-					const shortTitle = current.title.length > 18 ? current.title.slice(0, 15) + "..." : current.title;
-					void ev.action.setTitle(`♥\n${shortTitle}`);
-				} else {
-					void ev.action.setTitle("♥ Favorite");
-				}
-			}, 2000);
+			const result = await appleMusicApp.favoriteCurrent();
+			streamDeck.logger.info(`Favorite pressed for "${this.lastTitle}" (button "${result.before}" → "${result.after}")`);
+			await ev.action.showOk();
+			this.flashUntil = Date.now() + 2_000;
+			await ev.action.setTitle("Loved! ♥");
+			setTimeout(() => void this.renderAll(), 2_000);
 		} catch (err) {
-			streamDeck.logger.error("Failed to favorite track: " + (err as Error).message);
+			streamDeck.logger.error(`Could not favorite: ${(err as Error).message}`);
 			await ev.action.showAlert();
-			await ev.action.setTitle("Error");
 		}
 	}
-}
 
+	private async refresh(): Promise<void> {
+		try {
+			const now = await appleMusicApp.nowPlaying();
+			const title = now?.title || null;
+			if (title === this.lastTitle) return;
+			this.lastTitle = title;
+			await this.renderAll();
+		} catch {
+			// The bridge may be busy or Apple Music closed; try again on the next tick.
+		}
+	}
+
+	private async renderAll(): Promise<void> {
+		if (Date.now() < this.flashUntil) return;
+		const text = this.titleText();
+		await Promise.all([...this.keys.values()].map((k) => k.setTitle(text)));
+	}
+
+	private titleText(): string {
+		return this.lastTitle ? `♥\n${truncate(this.lastTitle, 16)}` : "♥ Favorite";
+	}
+}

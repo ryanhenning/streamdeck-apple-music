@@ -1,7 +1,5 @@
 {
     "scripts": {
-        "fetch-deps": "node scripts/download-smtc-reader.mjs",
-        "prebuild": "npm run fetch-deps",
         "build": "rollup -c",
         "build:win": "npm run build && node scripts/copy-plugin.js",
         "deploy": "node scripts/copy-plugin.js",

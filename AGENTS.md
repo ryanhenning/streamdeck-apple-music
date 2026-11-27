@@ -12,15 +12,18 @@ This repository contains a custom Stream Deck+ plugin built using Node.js/TypeSc
 - **Stream Deck Software**: Version 7.1 or higher.
 - **CLI Tooling**: Official Elgato CLI (`@elgato/cli@latest`).
 - **Development Environment**: WSL (Windows Subsystem for Linux) for source file management and build workflows, targeting the Windows Stream Deck plugin directory.
-- **Windows SMTC Layer**: `smtc-reader.exe` (v0.1.1 x64 by @Barrryy) bundled in `bin/smtc-reader.exe` via `npm run prebuild` / `npm run fetch-deps`.
+- **Target app**: Apple Music for Windows (Microsoft Store, WinUI 3). Windows only. No Apple Music API keys or tokens are used.
 
 ---
 
 ## Architecture & Integration
 
-- **Apple Music Web API (`amp-api.music.apple.com`)**: Fetches user playlists, library items, catalog search, and executes track favoriting (`PUT /v1/me/ratings/songs/{id}`).
-- **Windows SMTC Service (`src/services/smtc.ts`)**: Spawns `smtc-reader.exe --json --watch -i 1` to listen for real-time media session changes across Windows (track title, artist, album, and playback status).
-- **Favorite Track Action (`src/actions/favorite-track.ts`)**: Subscribes to `smtcService`, reflects the currently playing song title on the key display, and on press resolves the catalog song ID and favorites it via the API.
+- **Apple Music bridge (`com.ryan-henning.streamdeck-apple-music.sdPlugin/scripts/apple-music-bridge.ps1`)**: long-running Windows PowerShell 5.1 process, JSON lines over stdin/stdout. Uses Windows UI Automation on the Apple Music app (sidebar playlist items `IKIND:ePlaylist`, `PlayButtonElement`, `ShuffleButtonElement`, the now-playing bar `LCD` and its `Favorite` button) and Windows media controls (SMTC) for now-playing. Restores the previously focused window after acting.
+- **Bridge client (`src/services/apple-music-app.ts`)**: spawns and queues requests to the bridge; attaches playlist covers.
+- **Playlist artwork (`src/services/playlist-artwork.ts`)**: maps the playlist PID from the sidebar AutomationId (signed int64) to `item_to_artwork` → `cache_items` in `<library>/artwork.sqlite`, file `<library>/artwork/<artwork_id>_sk<size_kind>.<extension>`. The library is `<My Music>\Apple Music\Apple Music Library.musiclibrary` unless the `libraryPath` global setting overrides it.
+- **Playlist dial (`src/actions/playlist-dial.ts`)**: rotate browses, push plays in order, touch tap shuffles, touch hold reloads.
+- **Favorite key (`src/actions/favorite-track.ts`)**: shows the current title and presses the app's Favorite button.
+- Do not use Apple's web-player tokens (music.apple.com) or scrape them; that breaks Apple's terms.
 
 ---
 
@@ -32,6 +35,7 @@ This repository contains a custom Stream Deck+ plugin built using Node.js/TypeSc
 - `npm run deploy`: Fast sync of `.sdPlugin` directory to Windows host without rebuilding (for icons/manifest/layout changes).
 - `npm run validate`: Validates `manifest.json` and plugin structure against Elgato's official schemas.
 - `npm run pack`: Packages the plugin into a distributable `.streamDeckPlugin` file.
+- `npm test`: Runs unit tests with Vitest.
 
 ---
 

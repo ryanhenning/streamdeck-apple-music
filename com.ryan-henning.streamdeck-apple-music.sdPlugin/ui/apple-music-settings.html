@@ -2,20 +2,19 @@
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <title>Apple Music Settings</title>
+    <title>Playlists for Apple Music</title>
     <script src="https://sdpi-components.dev/releases/v3/sdpi-components.js"></script>
 </head>
 <body>
-    <sdpi-item label="User Token">
-        <sdpi-textfield setting="userToken" global placeholder="Music-User-Token cookie"></sdpi-textfield>
-    </sdpi-item>
-
-    <sdpi-item label="Dev Token">
-        <sdpi-textarea setting="developerToken" global rows="4" placeholder="Bearer JWT Token"></sdpi-textarea>
+    <sdpi-item label="Library folder">
+        <sdpi-textfield setting="libraryPath" global placeholder="Found automatically"></sdpi-textfield>
     </sdpi-item>
 
     <sdpi-item label="Info">
-        <p>Tokens are saved globally across all Apple Music dials and keys, or can be kept in config.local.json.</p>
+        <p>Needs the Apple Music app for Windows (Microsoft Store) to be running. No Apple account details are used.
+        Leave the library folder empty unless playlist covers are missing; then point it at your
+        "Apple Music Library.musiclibrary" folder.</p>
+        <p>Not affiliated with or endorsed by Apple.</p>
     </sdpi-item>
 </body>
 </html>
