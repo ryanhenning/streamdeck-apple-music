@@ -42,6 +42,22 @@
 					"TitleAlignment": "middle"
 				}
 			]
+		},
+		{
+			"Name": "Play Station",
+			"UUID": "com.ryan-henning.streamdeck-apple-music.station",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Starts your personal station or Discovery Station.",
+			"PropertyInspectorPath": "ui/station.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
 		}
 	],
 	"Category": "Playlists for Apple Music",

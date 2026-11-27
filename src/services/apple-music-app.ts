@@ -29,6 +29,8 @@ export interface NowPlaying {
 	status: string;
 }
 
+export type StationKind = "personal" | "discovery";
+
 type BridgeResponse = { id: number; ok: boolean; result?: unknown; error?: string };
 type SidebarItem = { name: string; aid: string; isFolder: boolean };
 type LibraryInfo = { myMusic: string; candidates: string[]; existing: string[] };
@@ -74,6 +76,12 @@ export class AppleMusicApp {
 	/** Presses the Favorite button in the app's now-playing bar. Returns the button's name before and after. */
 	async favoriteCurrent(): Promise<{ before: string; after: string }> {
 		return this.request("favorite", {}, 5_000);
+	}
+
+	/** Starts the personal station ("<Name>'s Station") or Discovery Station from the app's Home page. */
+	async playStation(kind: StationKind): Promise<string | null> {
+		const result = await this.request<{ status: string | null }>("playStation", { kind }, 20_000);
+		return result?.status ?? null;
 	}
 
 	dispose(): void {

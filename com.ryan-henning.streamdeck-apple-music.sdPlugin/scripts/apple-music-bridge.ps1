@@ -13,6 +13,7 @@
 #   thumbnails {items:[{src,dst}], size} -> resize artwork JPEGs to small PNGs for the touch strip
 #   nowPlaying           -> title / artist / status from Windows media controls
 #   favorite             -> press the now-playing bar's Favorite button
+#   playStation {kind}   -> start "<Name>'s Station" (kind=personal) or "Discovery Station" (kind=discovery)
 #   ping
 
 $ErrorActionPreference = 'Stop'
@@ -260,6 +261,46 @@ function Invoke-FavoriteCurrent {
 	return [ordered]@{ before = $before; after = $button.Current.Name }
 }
 
+function Find-StationTile($win, [string]$kind) {
+	# Home page > "Stations for You" shelf. Tiles are GridViewItems without an AutomationId; their title is a
+	# Text element with AutomationId 'TitleTextBlock' ("Ryan's Station", "Discovery Station").
+	$cond = New-Object System.Windows.Automation.PropertyCondition($AE::ClassNameProperty, 'GridViewItem')
+	foreach ($tile in $win.FindAll($TreeScope::Descendants, $cond)) {
+		$titleEl = Find-ById $tile 'TitleTextBlock'
+		$title = if ($titleEl) { $titleEl.Current.Name } else { '' }
+		if ($kind -eq 'discovery' -and $title -eq 'Discovery Station') { return $tile }
+		if ($kind -eq 'personal' -and ($title -match "[\u2019']s Station$") -and $title -ne 'Discovery Station') { return $tile }
+	}
+	return $null
+}
+
+function Invoke-PlayStation([string]$kind) {
+	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
+	try {
+		$win = Get-OrStartAppleMusicWindow
+		$tile = Find-StationTile $win $kind
+		if (-not $tile) {
+			$homeItem = Find-ById $win 'Sidebar_Home'
+			if (-not $homeItem) { throw 'The Home item was not found in the Apple Music sidebar.' }
+			(Get-Pattern $homeItem ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+			$deadline = (Get-Date).AddSeconds(5)
+			while (-not $tile -and (Get-Date) -lt $deadline) {
+				Start-Sleep -Milliseconds 200
+				$tile = Find-StationTile $win $kind
+			}
+		}
+		if (-not $tile) { throw "No $kind station on the Apple Music Home page." }
+		(Get-Pattern $tile ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+		$status = $null
+		for ($i = 0; $i -lt 20; $i++) {
+			Start-Sleep -Milliseconds 200
+			$status = Get-AppleMusicPlaybackStatus
+			if ($status -eq 'Playing') { break }
+		}
+		return [ordered]@{ status = $status }
+	} finally { Restore-Foreground $previousForeground }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Library location and artwork thumbnails
 # ---------------------------------------------------------------------------------------------
@@ -337,6 +378,7 @@ while ($true) {
 			'thumbnails' { New-Thumbnails $a.items ([int]$a.size) }
 			'nowPlaying' { Get-NowPlaying }
 			'favorite' { Invoke-FavoriteCurrent }
+			'playStation' { Invoke-PlayStation ([string]$a.kind) }
 			default { throw "Unknown command: $($req.cmd)" }
 		}
 		Send ([ordered]@{ id = $id; ok = $true; result = $result })

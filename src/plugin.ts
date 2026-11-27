@@ -1,5 +1,6 @@
 import streamDeck from "@elgato/streamdeck";
 import { FavoriteTrackAction } from "./actions/favorite-track";
+import { PlayStationAction } from "./actions/play-station";
 import { PlaylistDialAction } from "./actions/playlist-dial";
 import { appleMusicApp } from "./services/apple-music-app";
 
@@ -19,5 +20,6 @@ streamDeck.settings
 
 streamDeck.actions.registerAction(new PlaylistDialAction());
 streamDeck.actions.registerAction(new FavoriteTrackAction());
+streamDeck.actions.registerAction(new PlayStationAction());
 
 streamDeck.connect();

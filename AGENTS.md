@@ -22,6 +22,7 @@ This repository contains a custom Stream Deck+ plugin built using Node.js/TypeSc
 - **Bridge client (`src/services/apple-music-app.ts`)**: spawns and queues requests to the bridge; attaches playlist covers.
 - **Playlist artwork (`src/services/playlist-artwork.ts`)**: maps the playlist PID from the sidebar AutomationId (signed int64) to `item_to_artwork` → `cache_items` in `<library>/artwork.sqlite`, file `<library>/artwork/<artwork_id>_sk<size_kind>.<extension>`. The library is `<My Music>\Apple Music\Apple Music Library.musiclibrary` unless the `libraryPath` global setting overrides it.
 - **Playlist dial (`src/actions/playlist-dial.ts`)**: rotate browses, push plays in order, touch tap shuffles, touch hold reloads.
+- **Play Station key (`src/actions/play-station.ts`)**: starts "<Name>'s Station" or "Discovery Station" from the Home page's "Stations for You" shelf (GridViewItem tiles matched by their `TitleTextBlock`).
 - **Favorite key (`src/actions/favorite-track.ts`)**: shows the current title and presses the app's Favorite button.
 - Do not use Apple's web-player tokens (music.apple.com) or scrape them; that breaks Apple's terms.
 
