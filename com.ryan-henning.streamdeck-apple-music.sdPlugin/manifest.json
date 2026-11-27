@@ -21,8 +21,8 @@
 				"layout": "layouts/apple-music-dial.json",
 				"TriggerDescription": {
 					"Rotate": "Browse playlists",
-					"Push": "Play playlist",
-					"Touch": "Refresh playlists"
+					"Push": "Play playlist in order",
+					"Touch": "Tap: shuffle playlist · Hold: reload"
 				}
 			}
 		},
