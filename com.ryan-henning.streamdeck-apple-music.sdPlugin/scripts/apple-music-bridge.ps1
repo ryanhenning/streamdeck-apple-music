@@ -30,10 +30,82 @@ Add-Type -Namespace AmBridge -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
-[DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr value);
-public static void SetWindowLongPtrLater(IntPtr hWnd, int nIndex, IntPtr value, int delayMs) {
-	System.Threading.Tasks.Task.Delay(delayMs).ContinueWith(t => SetWindowLongPtr(hWnd, nIndex, value));
+public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+[DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint evMin, uint evMax, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
+[DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
+[DllImport("user32.dll")] public static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+[StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
+
+// Hand the foreground back to the window that had it, as soon as Apple Music takes it.
+public static bool GiveForegroundTo(IntPtr target) {
+	IntPtr now = GetForegroundWindow();
+	if (now == target) return true;
+	// Windows only lets the process that received the last input move the foreground, and the bridge runs
+	// without a console, so it has no such right of its own. A zero-length relative mouse move gives it
+	// that right without moving the pointer or pressing anything the game could see.
+	mouse_event(0x0001, 0, 0, 0, UIntPtr.Zero);
+	uint pid;
+	uint fgThread = GetWindowThreadProcessId(now, out pid);
+	uint me = GetCurrentThreadId();
+	bool attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+	try { return SetForegroundWindow(target); }
+	finally { if (attached) AttachThreadInput(me, fgThread, false); }
+}
+
+// Pressing buttons through UI Automation makes Apple Music take the foreground (even when minimized), which
+// pulls a game or browser out of focus. A WinEvent hook on its own thread sees each foreground change right
+// away; while a guard is active, a change to Apple Music is undone within a few milliseconds.
+static readonly object gate = new object();
+static IntPtr restoreTo = IntPtr.Zero;
+static uint guardPid;
+static long guardUntil;
+static uint hookThread;
+static WinEventProc proc;
+
+static void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
+	IntPtr target;
+	lock (gate) {
+		if (restoreTo == IntPtr.Zero || DateTime.UtcNow.Ticks > guardUntil) return;
+		uint pid;
+		GetWindowThreadProcessId(hwnd, out pid);
+		if (pid != guardPid) {
+			// The user switched to some other window: stop guarding.
+			if (hwnd != restoreTo) restoreTo = IntPtr.Zero;
+			return;
+		}
+		target = restoreTo;
+	}
+	GiveForegroundTo(target);
+}
+
+static void EnsureHook() {
+	if (hookThread != 0) return;
+	var ready = new System.Threading.ManualResetEvent(false);
+	var t = new System.Threading.Thread(() => {
+		proc = OnForeground;
+		// EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
+		IntPtr h = SetWinEventHook(3, 3, IntPtr.Zero, proc, 0, 0, 2);
+		hookThread = GetCurrentThreadId();
+		ready.Set();
+		MSG m;
+		while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
+		UnhookWinEvent(h);
+	});
+	t.IsBackground = true;
+	t.Start();
+	ready.WaitOne();
+}
+
+// Start guarding: keep 'previous' in front while Apple Music (process 'pid') tries to take it.
+public static void Guard(IntPtr previous, uint pid) {
+	EnsureHook();
+	lock (gate) { restoreTo = previous; guardPid = pid; guardUntil = DateTime.UtcNow.AddMinutes(1).Ticks; }
+}
+
+// The action is done; Apple Music activates itself a little later, so keep guarding for a while.
+public static void GuardFor(int ms) {
+	lock (gate) { guardUntil = DateTime.UtcNow.AddMilliseconds(ms).Ticks; }
 }
 '@
 
@@ -168,48 +240,27 @@ function Wait-ForElement($win, [string]$automationId, $previousRuntimeId, [int]$
 	return $el
 }
 
-function Restore-Foreground([IntPtr]$previous) {
-	# Selecting a sidebar item can bring a visible Apple Music window to the front. Put back whatever
-	# window had focus before (a game, a browser...). AttachThreadInput lets us pass the foreground lock.
-	if ($previous -eq [IntPtr]::Zero) { return }
-	$now = [AmBridge.Win32]::GetForegroundWindow()
-	if ($now -eq $previous) { return }
-	$ownerPid = [uint32]0
-	$fgThread = [AmBridge.Win32]::GetWindowThreadProcessId($now, [ref]$ownerPid)
-	$me = [AmBridge.Win32]::GetCurrentThreadId()
-	$attached = $false
-	if ($fgThread -ne 0 -and $fgThread -ne $me) { $attached = [AmBridge.Win32]::AttachThreadInput($me, $fgThread, $true) }
-	try { $null = [AmBridge.Win32]::SetForegroundWindow($previous) }
-	finally { if ($attached) { $null = [AmBridge.Win32]::AttachThreadInput($me, $fgThread, $false) } }
-}
-
-function Use-NoActivate($win, [scriptblock]$action) {
-	# Pressing buttons in Apple Music makes it take the foreground for a moment. While we act, mark its window
-	# WS_EX_NOACTIVATE so Windows won't activate it, then put the original style back. The app activates
-	# itself asynchronously, so keep the style a little longer than the action itself.
-	$GWL_EXSTYLE = -20
-	$WS_EX_NOACTIVATE = 0x08000000
-	$hwnd = [IntPtr]$win.Current.NativeWindowHandle
-	$original = [AmBridge.Win32]::GetWindowLongPtr($hwnd, $GWL_EXSTYLE)
-	$changed = $false
-	if ($hwnd -ne [IntPtr]::Zero -and (($original.ToInt64() -band $WS_EX_NOACTIVATE) -eq 0)) {
-		$null = [AmBridge.Win32]::SetWindowLongPtr($hwnd, $GWL_EXSTYLE, [IntPtr]($original.ToInt64() -bor $WS_EX_NOACTIVATE))
-		$changed = $true
-	}
+function Use-ForegroundGuard($win, [scriptblock]$action) {
+	# Keep whatever window had focus (a game, a browser...) in front while we press Apple Music's buttons.
+	$previous = [AmBridge.Win32]::GetForegroundWindow()
+	$amPid = [uint32]$win.Current.ProcessId
+	$fgPid = [uint32]0
+	$null = [AmBridge.Win32]::GetWindowThreadProcessId($previous, [ref]$fgPid)
+	if ($previous -eq [IntPtr]::Zero -or $fgPid -eq $amPid) { return & $action }
+	[AmBridge.Win32]::Guard($previous, $amPid)
 	try { return & $action }
 	finally {
-		# Restore on a background timer so the reply to the plugin isn't delayed.
-		if ($changed) { [AmBridge.Win32]::SetWindowLongPtrLater($hwnd, $GWL_EXSTYLE, $original, 1500) }
+		[AmBridge.Win32]::GuardFor(2000)
+		$now = [AmBridge.Win32]::GetForegroundWindow()
+		$nowPid = [uint32]0
+		$null = [AmBridge.Win32]::GetWindowThreadProcessId($now, [ref]$nowPid)
+		if ($nowPid -eq $amPid) { $null = [AmBridge.Win32]::GiveForegroundTo($previous) }
 	}
 }
 
 function Invoke-PlayPlaylist([string]$aid, [bool]$shuffle) {
-	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try {
-		$win = Get-OrStartAppleMusicWindow
-		return Use-NoActivate $win { Invoke-PlayPlaylistCore $aid $shuffle }
-	}
-	finally { Restore-Foreground $previousForeground }
+	$win = Get-OrStartAppleMusicWindow
+	return Use-ForegroundGuard $win { Invoke-PlayPlaylistCore $aid $shuffle }
 }
 
 function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
@@ -282,9 +333,7 @@ function Invoke-FavoriteCurrent {
 	}
 	if (-not $button) { throw 'No Favorite button in the now-playing bar.' }
 	$before = $button.Current.Name
-	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try { Use-NoActivate $win { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() } }
-	finally { Restore-Foreground $previousForeground }
+	Use-ForegroundGuard $win { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
 	Start-Sleep -Milliseconds 300
 	return [ordered]@{ before = $before; after = $button.Current.Name }
 }
@@ -303,10 +352,8 @@ function Find-StationTile($win, [string]$kind) {
 }
 
 function Invoke-PlayStation([string]$kind) {
-	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
 	$win = Get-OrStartAppleMusicWindow
-	try { return Use-NoActivate $win { Invoke-PlayStationCore $win $kind } }
-	finally { Restore-Foreground $previousForeground }
+	return Use-ForegroundGuard $win { Invoke-PlayStationCore $win $kind }
 }
 
 function Invoke-PlayStationCore($win, [string]$kind) {
@@ -408,9 +455,8 @@ while ($true) {
 			'ping' { 'pong' }
 			'listPlaylists' {
 				# Expanding sidebar folders can bring a visible Apple Music window to the front, like Select does.
-				$fg = [AmBridge.Win32]::GetForegroundWindow()
 				$amWin = Get-OrStartAppleMusicWindow
-				try { Use-NoActivate $amWin { , (Get-SidebarPlaylists) } } finally { Restore-Foreground $fg }
+				Use-ForegroundGuard $amWin { , (Get-SidebarPlaylists) }
 			}
 			'play' { Invoke-PlayPlaylist ([string]$a.aid) ([bool]$a.shuffle) }
 			'libraryInfo' { Get-LibraryInfo }
