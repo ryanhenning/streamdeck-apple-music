@@ -30,6 +30,11 @@ Add-Type -Namespace AmBridge -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+[DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr value);
+public static void SetWindowLongPtrLater(IntPtr hWnd, int nIndex, IntPtr value, int delayMs) {
+	System.Threading.Tasks.Task.Delay(delayMs).ContinueWith(t => SetWindowLongPtr(hWnd, nIndex, value));
+}
 '@
 
 $AE = [System.Windows.Automation.AutomationElement]
@@ -178,9 +183,32 @@ function Restore-Foreground([IntPtr]$previous) {
 	finally { if ($attached) { $null = [AmBridge.Win32]::AttachThreadInput($me, $fgThread, $false) } }
 }
 
+function Use-NoActivate($win, [scriptblock]$action) {
+	# Pressing buttons in Apple Music makes it take the foreground for a moment. While we act, mark its window
+	# WS_EX_NOACTIVATE so Windows won't activate it, then put the original style back. The app activates
+	# itself asynchronously, so keep the style a little longer than the action itself.
+	$GWL_EXSTYLE = -20
+	$WS_EX_NOACTIVATE = 0x08000000
+	$hwnd = [IntPtr]$win.Current.NativeWindowHandle
+	$original = [AmBridge.Win32]::GetWindowLongPtr($hwnd, $GWL_EXSTYLE)
+	$changed = $false
+	if ($hwnd -ne [IntPtr]::Zero -and (($original.ToInt64() -band $WS_EX_NOACTIVATE) -eq 0)) {
+		$null = [AmBridge.Win32]::SetWindowLongPtr($hwnd, $GWL_EXSTYLE, [IntPtr]($original.ToInt64() -bor $WS_EX_NOACTIVATE))
+		$changed = $true
+	}
+	try { return & $action }
+	finally {
+		# Restore on a background timer so the reply to the plugin isn't delayed.
+		if ($changed) { [AmBridge.Win32]::SetWindowLongPtrLater($hwnd, $GWL_EXSTYLE, $original, 1500) }
+	}
+}
+
 function Invoke-PlayPlaylist([string]$aid, [bool]$shuffle) {
 	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try { return Invoke-PlayPlaylistCore $aid $shuffle }
+	try {
+		$win = Get-OrStartAppleMusicWindow
+		return Use-NoActivate $win { Invoke-PlayPlaylistCore $aid $shuffle }
+	}
 	finally { Restore-Foreground $previousForeground }
 }
 
@@ -255,7 +283,7 @@ function Invoke-FavoriteCurrent {
 	if (-not $button) { throw 'No Favorite button in the now-playing bar.' }
 	$before = $button.Current.Name
 	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+	try { Use-NoActivate $win { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() } }
 	finally { Restore-Foreground $previousForeground }
 	Start-Sleep -Milliseconds 300
 	return [ordered]@{ before = $before; after = $button.Current.Name }
@@ -276,8 +304,13 @@ function Find-StationTile($win, [string]$kind) {
 
 function Invoke-PlayStation([string]$kind) {
 	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try {
-		$win = Get-OrStartAppleMusicWindow
+	$win = Get-OrStartAppleMusicWindow
+	try { return Use-NoActivate $win { Invoke-PlayStationCore $win $kind } }
+	finally { Restore-Foreground $previousForeground }
+}
+
+function Invoke-PlayStationCore($win, [string]$kind) {
+	if ($true) {
 		$tile = Find-StationTile $win $kind
 		if (-not $tile) {
 			$homeItem = Find-ById $win 'Sidebar_Home'
@@ -303,7 +336,7 @@ function Invoke-PlayStation([string]$kind) {
 		}
 		$changed = [bool]($now -and $now.title -ne $beforeTitle)
 		return [ordered]@{ status = $(if ($now) { $now.status } else { $null }); changed = $changed; title = $(if ($now) { $now.title } else { $null }) }
-	} finally { Restore-Foreground $previousForeground }
+	}
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -376,7 +409,8 @@ while ($true) {
 			'listPlaylists' {
 				# Expanding sidebar folders can bring a visible Apple Music window to the front, like Select does.
 				$fg = [AmBridge.Win32]::GetForegroundWindow()
-				try { , (Get-SidebarPlaylists) } finally { Restore-Foreground $fg }
+				$amWin = Get-OrStartAppleMusicWindow
+				try { Use-NoActivate $amWin { , (Get-SidebarPlaylists) } } finally { Restore-Foreground $fg }
 			}
 			'play' { Invoke-PlayPlaylist ([string]$a.aid) ([bool]$a.shuffle) }
 			'libraryInfo' { Get-LibraryInfo }
