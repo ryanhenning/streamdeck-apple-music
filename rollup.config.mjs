@@ -13,6 +13,8 @@ const sdPlugin = "com.ryan-henning.streamdeck-apple-music.sdPlugin";
  */
 const config = {
 	input: "src/plugin.ts",
+	// node:sqlite (used to read Apple Music's artwork cache) is newer than rollup's builtin list.
+	external: [/^node:/],
 	output: {
 		file: `${sdPlugin}/bin/plugin.js`,
 		sourcemap: isWatching,

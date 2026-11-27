@@ -7,7 +7,9 @@
         "deploy": "node scripts/copy-plugin.js",
         "pack": "streamdeck pack com.ryan-henning.streamdeck-apple-music.sdPlugin",
         "validate": "streamdeck validate com.ryan-henning.streamdeck-apple-music.sdPlugin",
-        "watch": "rollup -c -w --watch.onEnd=\"node scripts/watch-sync.mjs\""
+        "watch": "rollup -c -w --watch.onEnd=\"node scripts/watch-sync.mjs\"",
+        "test": "vitest run",
+        "test:watch": "vitest"
     },
     "type": "module",
     "devDependencies": {
@@ -20,7 +22,8 @@
         "@types/node": "~24.1.0",
         "rollup": "^4.0.2",
         "tslib": "^2.6.2",
-        "typescript": "^5.2.2"
+        "typescript": "^5.2.2",
+        "vitest": "^3.2.7"
     },
     "dependencies": {
         "@elgato/streamdeck": "^3.0.0"

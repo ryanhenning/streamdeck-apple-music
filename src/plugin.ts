@@ -2,13 +2,15 @@ import streamDeck from "@elgato/streamdeck";
 import { PlaylistDialAction } from "./actions/playlist-dial";
 import { FavoriteTrackAction } from "./actions/favorite-track";
 import { appleMusic } from "./services/apple-music";
+import { appleMusicApp } from "./services/apple-music-app";
 
 // Enable trace logging during development
 streamDeck.logger.setLevel("trace");
 
 // Listen for global settings changes (e.g. from the Property Inspector)
 streamDeck.settings.onDidReceiveGlobalSettings((ev) => {
-	const settings = ev.settings as { developerToken?: string; userToken?: string };
+	const settings = ev.settings as { developerToken?: string; userToken?: string; libraryPath?: string };
+	appleMusicApp.setLibraryPath(settings.libraryPath);
 	if (settings.developerToken || settings.userToken) {
 		appleMusic.setTokens({
 			developerToken: settings.developerToken,
@@ -19,7 +21,8 @@ streamDeck.settings.onDidReceiveGlobalSettings((ev) => {
 });
 
 // Load existing global settings on startup
-streamDeck.settings.getGlobalSettings<{ developerToken?: string; userToken?: string }>().then((settings) => {
+streamDeck.settings.getGlobalSettings<{ developerToken?: string; userToken?: string; libraryPath?: string }>().then((settings) => {
+	appleMusicApp.setLibraryPath(settings?.libraryPath);
 	if (settings?.developerToken || settings?.userToken) {
 		appleMusic.setTokens({
 			developerToken: settings.developerToken,
