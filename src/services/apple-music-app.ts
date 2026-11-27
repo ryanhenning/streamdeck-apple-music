@@ -21,6 +21,16 @@ export interface AppPlaylist {
 	artwork?: string;
 }
 
+/** The current track as Windows media controls report it. */
+export interface NowPlaying {
+	title: string;
+	/** Apple Music reports "Artist — Album" here. */
+	artist: string;
+	status: string;
+}
+
+export type StationKind = "personal" | "discovery";
+
 type BridgeResponse = { id: number; ok: boolean; result?: unknown; error?: string };
 type SidebarItem = { name: string; aid: string; isFolder: boolean };
 type LibraryInfo = { myMusic: string; candidates: string[]; existing: string[] };
@@ -56,6 +66,21 @@ export class AppleMusicApp {
 	async play(playlist: AppPlaylist, shuffle: boolean): Promise<string | null> {
 		const result = await this.request<{ status: string | null }>("play", { aid: playlist.automationId, shuffle }, 20_000);
 		return result?.status ?? null;
+	}
+
+	/** What Apple Music is playing, from Windows media controls; null when it has no session. */
+	async nowPlaying(): Promise<NowPlaying | null> {
+		return (await this.request<NowPlaying | null>("nowPlaying", {}, 5_000)) ?? null;
+	}
+
+	/** Presses the Favorite button in the app's now-playing bar. Returns the button's name before and after. */
+	async favoriteCurrent(): Promise<{ before: string; after: string }> {
+		return this.request("favorite", {}, 5_000);
+	}
+
+	/** Starts the personal station ("<Name>'s Station") or Discovery Station from the app's Home page. */
+	async playStation(kind: StationKind): Promise<{ status: string | null; changed: boolean; title: string | null }> {
+		return this.request("playStation", { kind }, 20_000);
 	}
 
 	dispose(): void {

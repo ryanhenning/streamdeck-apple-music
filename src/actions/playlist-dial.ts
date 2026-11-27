@@ -30,6 +30,8 @@ export class PlaylistDialAction extends SingletonAction<PlaylistDialSettings> {
 	private currentIndex = 0;
 	private loading: Promise<void> | null = null;
 	private busy = false;
+	/** The latest press that arrived while a play was still running; it runs as soon as that one finishes. */
+	private pending: { playlist: AppPlaylist; shuffle: boolean } | null = null;
 
 	override async onWillAppear(ev: WillAppearEvent<PlaylistDialSettings>): Promise<void> {
 		if (!ev.action.isDial()) return;
@@ -68,8 +70,17 @@ export class PlaylistDialAction extends SingletonAction<PlaylistDialSettings> {
 			await this.load(dial);
 			return;
 		}
-		if (this.busy) return;
-		const selected = this.playlists[this.currentIndex];
+		await this.playPlaylist(dial, this.playlists[this.currentIndex], shuffle);
+	}
+
+	private async playPlaylist(dial: DialAction<PlaylistDialSettings>, selected: AppPlaylist | undefined, shuffle: boolean): Promise<void> {
+		if (!selected) return;
+		if (this.busy) {
+			// Don't drop the press: remember it (latest wins) and run it when the current play finishes.
+			this.pending = { playlist: selected, shuffle };
+			await dial.setFeedback({ subtitle: shuffle ? "Shuffling next…" : "Playing next…" });
+			return;
+		}
 		this.busy = true;
 		try {
 			await dial.setFeedback({ subtitle: shuffle ? "Shuffling…" : "Starting…" });
@@ -83,6 +94,9 @@ export class PlaylistDialAction extends SingletonAction<PlaylistDialSettings> {
 		} finally {
 			this.busy = false;
 		}
+		const next = this.pending;
+		this.pending = null;
+		if (next) await this.playPlaylist(dial, next.playlist, next.shuffle);
 	}
 
 	private load(dial: DialAction<PlaylistDialSettings>, keepName?: string): Promise<void> {

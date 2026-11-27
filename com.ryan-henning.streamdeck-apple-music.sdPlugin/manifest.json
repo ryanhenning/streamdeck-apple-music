@@ -1,5 +1,5 @@
 {
-	"Name": "Apple Music+",
+	"Name": "Playlists for Apple Music",
 	"Version": "0.1.0.0",
 	"Author": "Ryan Henning",
 	"Actions": [
@@ -7,7 +7,7 @@
 			"Name": "Browse Playlists",
 			"UUID": "com.ryan-henning.streamdeck-apple-music.playlist-dial",
 			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Rotate to browse Apple Music playlists, press to play.",
+			"Tooltip": "Rotate to browse playlists; push to play, tap to shuffle.",
 			"PropertyInspectorPath": "ui/apple-music-settings.html",
 			"Controllers": [
 				"Encoder"
@@ -30,7 +30,7 @@
 			"Name": "Favorite Track",
 			"UUID": "com.ryan-henning.streamdeck-apple-music.favorite",
 			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Loves / Favorites the currently playing track in Apple Music.",
+			"Tooltip": "Favorites the song playing in Apple Music.",
 			"PropertyInspectorPath": "ui/apple-music-settings.html",
 			"Controllers": [
 				"Keypad"
@@ -42,12 +42,28 @@
 					"TitleAlignment": "middle"
 				}
 			]
+		},
+		{
+			"Name": "Play Station",
+			"UUID": "com.ryan-henning.streamdeck-apple-music.station",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Starts your personal station or Discovery Station.",
+			"PropertyInspectorPath": "ui/station.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
 		}
 	],
-	"Category": "Apple Music",
+	"Category": "Playlists for Apple Music",
 	"CategoryIcon": "imgs/plugin/category-icon",
 	"CodePath": "bin/plugin.js",
-	"Description": "Control Apple Music playback and browse playlists via Stream Deck+",
+	"Description": "Browse your Apple Music playlists on a Stream Deck+ dial, with their cover art, and play them in order or shuffled. Windows only; needs the Apple Music app from the Microsoft Store. Not affiliated with or endorsed by Apple.",
 	"Icon": "imgs/plugin/marketplace",
 	"SDKVersion": 3,
 	"Software": {

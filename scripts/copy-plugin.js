@@ -68,13 +68,6 @@ function copyPlugin() {
     try {
         fs.cpSync(SOURCE_DIR, targetDir, { recursive: true, force: true });
 
-        // Copy config.local.json if present in repo root so the running plugin can load it
-        const localConfig = path.join(REPO_ROOT, "config.local.json");
-        if (fs.existsSync(localConfig)) {
-            fs.copyFileSync(localConfig, path.join(targetDir, "config.local.json"));
-            console.log(`[copy-plugin] Copied config.local.json to ${targetDir}`);
-        }
-
         console.log(`[copy-plugin] Successfully deployed to ${targetDir}`);
     } catch (err) {
         if (err.code === "EACCES" || err.code === "EBUSY") {

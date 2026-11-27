@@ -11,6 +11,9 @@
 #   play {aid, shuffle}  -> open that playlist and press Play (in order) or Shuffle
 #   libraryInfo          -> where the "Apple Music Library.musiclibrary" folder is likely to be
 #   thumbnails {items:[{src,dst}], size} -> resize artwork JPEGs to small PNGs for the touch strip
+#   nowPlaying           -> title / artist / status from Windows media controls
+#   favorite             -> press the now-playing bar's Favorite button
+#   playStation {kind}   -> start "<Name>'s Station" (kind=personal) or "Discovery Station" (kind=discovery)
 #   ping
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +30,83 @@ Add-Type -Namespace AmBridge -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+[DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint evMin, uint evMax, IntPtr mod, WinEventProc proc, uint pid, uint tid, uint flags);
+[DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
+[DllImport("user32.dll")] public static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+[StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
+
+// Hand the foreground back to the window that had it, as soon as Apple Music takes it.
+public static bool GiveForegroundTo(IntPtr target) {
+	IntPtr now = GetForegroundWindow();
+	if (now == target) return true;
+	// Windows only lets the process that received the last input move the foreground, and the bridge runs
+	// without a console, so it has no such right of its own. A zero-length relative mouse move gives it
+	// that right without moving the pointer or pressing anything the game could see.
+	mouse_event(0x0001, 0, 0, 0, UIntPtr.Zero);
+	uint pid;
+	uint fgThread = GetWindowThreadProcessId(now, out pid);
+	uint me = GetCurrentThreadId();
+	bool attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+	try { return SetForegroundWindow(target); }
+	finally { if (attached) AttachThreadInput(me, fgThread, false); }
+}
+
+// Pressing buttons through UI Automation makes Apple Music take the foreground (even when minimized), which
+// pulls a game or browser out of focus. A WinEvent hook on its own thread sees each foreground change right
+// away; while a guard is active, a change to Apple Music is undone within a few milliseconds.
+static readonly object gate = new object();
+static IntPtr restoreTo = IntPtr.Zero;
+static uint guardPid;
+static long guardUntil;
+static uint hookThread;
+static WinEventProc proc;
+
+static void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
+	IntPtr target;
+	lock (gate) {
+		if (restoreTo == IntPtr.Zero || DateTime.UtcNow.Ticks > guardUntil) return;
+		uint pid;
+		GetWindowThreadProcessId(hwnd, out pid);
+		if (pid != guardPid) {
+			// The user switched to some other window: stop guarding.
+			if (hwnd != restoreTo) restoreTo = IntPtr.Zero;
+			return;
+		}
+		target = restoreTo;
+	}
+	GiveForegroundTo(target);
+}
+
+static void EnsureHook() {
+	if (hookThread != 0) return;
+	var ready = new System.Threading.ManualResetEvent(false);
+	var t = new System.Threading.Thread(() => {
+		proc = OnForeground;
+		// EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
+		IntPtr h = SetWinEventHook(3, 3, IntPtr.Zero, proc, 0, 0, 2);
+		hookThread = GetCurrentThreadId();
+		ready.Set();
+		MSG m;
+		while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
+		UnhookWinEvent(h);
+	});
+	t.IsBackground = true;
+	t.Start();
+	ready.WaitOne();
+}
+
+// Start guarding: keep 'previous' in front while Apple Music (process 'pid') tries to take it.
+public static void Guard(IntPtr previous, uint pid) {
+	EnsureHook();
+	lock (gate) { restoreTo = previous; guardPid = pid; guardUntil = DateTime.UtcNow.AddMinutes(1).Ticks; }
+}
+
+// The action is done; Apple Music activates itself a little later, so keep guarding for a while.
+public static void GuardFor(int ms) {
+	lock (gate) { guardUntil = DateTime.UtcNow.AddMilliseconds(ms).Ticks; }
+}
 '@
 
 $AE = [System.Windows.Automation.AutomationElement]
@@ -160,25 +240,27 @@ function Wait-ForElement($win, [string]$automationId, $previousRuntimeId, [int]$
 	return $el
 }
 
-function Restore-Foreground([IntPtr]$previous) {
-	# Selecting a sidebar item can bring a visible Apple Music window to the front. Put back whatever
-	# window had focus before (a game, a browser...). AttachThreadInput lets us pass the foreground lock.
-	if ($previous -eq [IntPtr]::Zero) { return }
-	$now = [AmBridge.Win32]::GetForegroundWindow()
-	if ($now -eq $previous) { return }
-	$ownerPid = [uint32]0
-	$fgThread = [AmBridge.Win32]::GetWindowThreadProcessId($now, [ref]$ownerPid)
-	$me = [AmBridge.Win32]::GetCurrentThreadId()
-	$attached = $false
-	if ($fgThread -ne 0 -and $fgThread -ne $me) { $attached = [AmBridge.Win32]::AttachThreadInput($me, $fgThread, $true) }
-	try { $null = [AmBridge.Win32]::SetForegroundWindow($previous) }
-	finally { if ($attached) { $null = [AmBridge.Win32]::AttachThreadInput($me, $fgThread, $false) } }
+function Use-ForegroundGuard($win, [scriptblock]$action) {
+	# Keep whatever window had focus (a game, a browser...) in front while we press Apple Music's buttons.
+	$previous = [AmBridge.Win32]::GetForegroundWindow()
+	$amPid = [uint32]$win.Current.ProcessId
+	$fgPid = [uint32]0
+	$null = [AmBridge.Win32]::GetWindowThreadProcessId($previous, [ref]$fgPid)
+	if ($previous -eq [IntPtr]::Zero -or $fgPid -eq $amPid) { return & $action }
+	[AmBridge.Win32]::Guard($previous, $amPid)
+	try { return & $action }
+	finally {
+		[AmBridge.Win32]::GuardFor(2000)
+		$now = [AmBridge.Win32]::GetForegroundWindow()
+		$nowPid = [uint32]0
+		$null = [AmBridge.Win32]::GetWindowThreadProcessId($now, [ref]$nowPid)
+		if ($nowPid -eq $amPid) { $null = [AmBridge.Win32]::GiveForegroundTo($previous) }
+	}
 }
 
 function Invoke-PlayPlaylist([string]$aid, [bool]$shuffle) {
-	$previousForeground = [AmBridge.Win32]::GetForegroundWindow()
-	try { return Invoke-PlayPlaylistCore $aid $shuffle }
-	finally { Restore-Foreground $previousForeground }
+	$win = Get-OrStartAppleMusicWindow
+	return Use-ForegroundGuard $win { Invoke-PlayPlaylistCore $aid $shuffle }
 }
 
 function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
@@ -196,9 +278,14 @@ function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
 
 	$sel = Get-Pattern $item ([System.Windows.Automation.SelectionItemPattern]::Pattern)
 	if (-not $sel) { throw "Sidebar item can't be selected: $aid" }
-	$sel.Select()
-
-	$button = Wait-ForElement $win $buttonId $beforeId 3000
+	if ($sel.Current.IsSelected -and $before) {
+		# The playlist's page is already showing, so selecting it again won't rebuild the page. Waiting for a
+		# new button would just run into the timeout; press the one that's there.
+		$button = $before
+	} else {
+		$sel.Select()
+		$button = Wait-ForElement $win $buttonId $beforeId 3000
+	}
 	if (-not $button) { throw "The playlist page has no $buttonId." }
 	$invoke = Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)
 	$invoke.Invoke()
@@ -216,6 +303,87 @@ function Invoke-PlayPlaylistCore([string]$aid, [bool]$shuffle) {
 		$status = Get-AppleMusicPlaybackStatus
 	}
 	return [ordered]@{ status = $status }
+}
+
+function Get-NowPlaying {
+	try {
+		if (-not $script:smtc) {
+			$script:smtc = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+		}
+		foreach ($s in $script:smtc.GetSessions()) {
+			if ($s.SourceAppUserModelId -notlike 'AppleInc.AppleMusicWin*') { continue }
+			$p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+			# Apple Music puts "Artist - Album" into the artist field and leaves the album empty.
+			return [ordered]@{ title = $p.Title; artist = $p.Artist; status = [string]$s.GetPlaybackInfo().PlaybackStatus }
+		}
+	} catch { }
+	return $null
+}
+
+function Invoke-FavoriteCurrent {
+	# The now-playing bar (TransportBar > LCD) has a Button named 'Favorite' with no AutomationId.
+	$win = Get-AppleMusicWindow
+	if (-not $win) { throw 'Apple Music is not running.' }
+	$lcd = Find-ById $win 'LCD'
+	if (-not $lcd) { throw 'The now-playing bar was not found.' }
+	$cond = New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+	$button = $null
+	foreach ($b in $lcd.FindAll($TreeScope::Children, $cond)) {
+		if ($b.Current.Name -like 'Favorite*' -or $b.Current.Name -like '*Favorite') { $button = $b; break }
+	}
+	if (-not $button) { throw 'No Favorite button in the now-playing bar.' }
+	$before = $button.Current.Name
+	Use-ForegroundGuard $win { (Get-Pattern $button ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke() }
+	Start-Sleep -Milliseconds 300
+	return [ordered]@{ before = $before; after = $button.Current.Name }
+}
+
+function Find-StationTile($win, [string]$kind) {
+	# Home page > "Stations for You" shelf. Tiles are GridViewItems without an AutomationId; their title is a
+	# Text element with AutomationId 'TitleTextBlock' ("Ryan's Station", "Discovery Station").
+	$cond = New-Object System.Windows.Automation.PropertyCondition($AE::ClassNameProperty, 'GridViewItem')
+	foreach ($tile in $win.FindAll($TreeScope::Descendants, $cond)) {
+		$titleEl = Find-ById $tile 'TitleTextBlock'
+		$title = if ($titleEl) { $titleEl.Current.Name } else { '' }
+		if ($kind -eq 'discovery' -and $title -eq 'Discovery Station') { return $tile }
+		if ($kind -eq 'personal' -and ($title -match "[\u2019']s Station$") -and $title -ne 'Discovery Station') { return $tile }
+	}
+	return $null
+}
+
+function Invoke-PlayStation([string]$kind) {
+	$win = Get-OrStartAppleMusicWindow
+	return Use-ForegroundGuard $win { Invoke-PlayStationCore $win $kind }
+}
+
+function Invoke-PlayStationCore($win, [string]$kind) {
+	if ($true) {
+		$tile = Find-StationTile $win $kind
+		if (-not $tile) {
+			$homeItem = Find-ById $win 'Sidebar_Home'
+			if (-not $homeItem) { throw 'The Home item was not found in the Apple Music sidebar.' }
+			(Get-Pattern $homeItem ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+			$deadline = (Get-Date).AddSeconds(5)
+			while (-not $tile -and (Get-Date) -lt $deadline) {
+				Start-Sleep -Milliseconds 200
+				$tile = Find-StationTile $win $kind
+			}
+		}
+		if (-not $tile) { throw "No $kind station on the Apple Music Home page." }
+		$before = Get-NowPlaying
+		$beforeTitle = if ($before) { $before.title } else { $null }
+		(Get-Pattern $tile ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+		# "Playing" alone doesn't prove the station started (something may already be playing), so also wait
+		# for the track to change.
+		$now = $null
+		for ($i = 0; $i -lt 25; $i++) {
+			Start-Sleep -Milliseconds 200
+			$now = Get-NowPlaying
+			if ($now -and $now.status -eq 'Playing' -and $now.title -ne $beforeTitle) { break }
+		}
+		$changed = [bool]($now -and $now.title -ne $beforeTitle)
+		return [ordered]@{ status = $(if ($now) { $now.status } else { $null }); changed = $changed; title = $(if ($now) { $now.title } else { $null }) }
+	}
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -285,10 +453,17 @@ while ($true) {
 		$a = $req.args
 		$result = switch ($req.cmd) {
 			'ping' { 'pong' }
-			'listPlaylists' { , (Get-SidebarPlaylists) }
+			'listPlaylists' {
+				# Expanding sidebar folders can bring a visible Apple Music window to the front, like Select does.
+				$amWin = Get-OrStartAppleMusicWindow
+				Use-ForegroundGuard $amWin { , (Get-SidebarPlaylists) }
+			}
 			'play' { Invoke-PlayPlaylist ([string]$a.aid) ([bool]$a.shuffle) }
 			'libraryInfo' { Get-LibraryInfo }
 			'thumbnails' { New-Thumbnails $a.items ([int]$a.size) }
+			'nowPlaying' { Get-NowPlaying }
+			'favorite' { Invoke-FavoriteCurrent }
+			'playStation' { Invoke-PlayStation ([string]$a.kind) }
 			default { throw "Unknown command: $($req.cmd)" }
 		}
 		Send ([ordered]@{ id = $id; ok = $true; result = $result })
