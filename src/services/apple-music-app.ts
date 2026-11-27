@@ -79,9 +79,8 @@ export class AppleMusicApp {
 	}
 
 	/** Starts the personal station ("<Name>'s Station") or Discovery Station from the app's Home page. */
-	async playStation(kind: StationKind): Promise<string | null> {
-		const result = await this.request<{ status: string | null }>("playStation", { kind }, 20_000);
-		return result?.status ?? null;
+	async playStation(kind: StationKind): Promise<{ status: string | null; changed: boolean; title: string | null }> {
+		return this.request("playStation", { kind }, 20_000);
 	}
 
 	dispose(): void {

@@ -30,9 +30,9 @@ export class PlayStationAction extends SingletonAction<PlayStationSettings> {
 		const kind = stationOf(ev.payload.settings);
 		this.busy = true;
 		try {
-			const status = await appleMusicApp.playStation(kind);
-			streamDeck.logger.info(`Started ${kind} station, status=${status}`);
-			if (status === "Playing") await ev.action.showOk();
+			const result = await appleMusicApp.playStation(kind);
+			streamDeck.logger.info(`Started ${kind} station: "${result.title}" status=${result.status} changed=${result.changed}`);
+			if (result.status === "Playing" && result.changed) await ev.action.showOk();
 			else await ev.action.showAlert();
 		} catch (err) {
 			streamDeck.logger.error(`Could not start ${kind} station: ${(err as Error).message}`);

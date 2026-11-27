@@ -234,7 +234,7 @@ function Get-NowPlaying {
 		foreach ($s in $script:smtc.GetSessions()) {
 			if ($s.SourceAppUserModelId -notlike 'AppleInc.AppleMusicWin*') { continue }
 			$p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
-			# Apple Music puts "Artist — Album" into the artist field and leaves the album empty.
+			# Apple Music puts "Artist - Album" into the artist field and leaves the album empty.
 			return [ordered]@{ title = $p.Title; artist = $p.Artist; status = [string]$s.GetPlaybackInfo().PlaybackStatus }
 		}
 	} catch { }
@@ -290,14 +290,19 @@ function Invoke-PlayStation([string]$kind) {
 			}
 		}
 		if (-not $tile) { throw "No $kind station on the Apple Music Home page." }
+		$before = Get-NowPlaying
+		$beforeTitle = if ($before) { $before.title } else { $null }
 		(Get-Pattern $tile ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
-		$status = $null
-		for ($i = 0; $i -lt 20; $i++) {
+		# "Playing" alone doesn't prove the station started (something may already be playing), so also wait
+		# for the track to change.
+		$now = $null
+		for ($i = 0; $i -lt 25; $i++) {
 			Start-Sleep -Milliseconds 200
-			$status = Get-AppleMusicPlaybackStatus
-			if ($status -eq 'Playing') { break }
+			$now = Get-NowPlaying
+			if ($now -and $now.status -eq 'Playing' -and $now.title -ne $beforeTitle) { break }
 		}
-		return [ordered]@{ status = $status }
+		$changed = [bool]($now -and $now.title -ne $beforeTitle)
+		return [ordered]@{ status = $(if ($now) { $now.status } else { $null }); changed = $changed; title = $(if ($now) { $now.title } else { $null }) }
 	} finally { Restore-Foreground $previousForeground }
 }
 
